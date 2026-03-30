@@ -165,7 +165,7 @@ export default function App() {
     packet.set(metaBytes, 4);
     packet.set(new Uint8Array(fileBuffer), 4 + metaBytes.byteLength);
 
-    connection.send(packet.buffer);
+    connection.send(packet);
     setProgress(100);
     setTransferState('completed');
   };
