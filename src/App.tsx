@@ -89,27 +89,28 @@ export default function App() {
     });
 
     conn.on('data', (data: any) => {
-      if (data.type === 'name') {
+      if (data && data.type === 'name') {
         setRemotePeerName(data.name);
-      } else if (data.type === 'file-start') {
-        // Store incoming file metadata so we can label the blob correctly
-        pendingFileMeta.current = { name: data.name, type: data.fileType };
+      } else if (data && data.type === 'file-start') {
+        // Store file metadata; the raw binary arrives in the next message
+        pendingFileMeta.current = { name: data.name, type: data.fileType || '' };
         setTransferState('transferring');
         setProgress(0);
-      } else if (data instanceof Blob || data instanceof ArrayBuffer) {
-        // Received the actual file — attach stored metadata
+      } else if (data instanceof ArrayBuffer || data instanceof Blob) {
+        // Reconstruct blob with the pre-stored name and MIME type
         const meta = pendingFileMeta.current;
-        const mimeType = meta?.type || '';
-        const blob = data instanceof Blob
-          ? new Blob([data], { type: mimeType })
-          : new Blob([data], { type: mimeType });
+        const mimeType = meta?.type || 'application/octet-stream';
+        const blob = new Blob(
+          [data instanceof Blob ? data : data],
+          { type: mimeType }
+        );
         setReceivedFile({
           blob,
           metadata: {
             name: meta?.name || 'received-file',
             size: blob.size,
-            type: mimeType
-          }
+            type: mimeType,
+          },
         });
         pendingFileMeta.current = null;
         setTransferState('completed');
@@ -139,42 +140,36 @@ export default function App() {
 
     setRemotePeerName(decoded.senderName);
     const conn = peer.connect(decoded.peerId, {
-      metadata: { name: 'receiver' }
+      metadata: { name: 'receiver' },
+      serialization: 'binary',
+      reliable: true,
     });
     setConnection(conn);
     setupConnection(conn);
     setMode('receive');
   };
 
-  const handleSendFile = () => {
+  const handleSendFile = async () => {
     if (!connection || !selectedFile) return;
 
     setTransferState('transferring');
-    setProgress(10);
+    setProgress(5);
 
-    // First send file metadata so the receiver knows the name and type
+    // 1. Send metadata first so receiver knows name + MIME type before binary arrives
     connection.send({
       type: 'file-start',
       name: selectedFile.name,
-      fileType: selectedFile.type,
+      fileType: selectedFile.type || 'application/octet-stream',
       size: selectedFile.size,
     });
 
-    // Then send the actual file blob
-    connection.send(selectedFile);
+    // 2. Convert File → ArrayBuffer; PeerJS reliably transmits ArrayBuffers as raw bytes
+    const arrayBuffer = await selectedFile.arrayBuffer();
+    setProgress(50);
+    connection.send(arrayBuffer);
 
-    // Simulate progress (PeerJS doesn't expose per-chunk progress for simple sends)
-    let p = 10;
-    const interval = setInterval(() => {
-      p += Math.random() * 20;
-      if (p >= 95) {
-        clearInterval(interval);
-        setProgress(100);
-        setTransferState('completed');
-      } else {
-        setProgress(p);
-      }
-    }, 200);
+    setProgress(100);
+    setTransferState('completed');
   };
 
   const copyKey = () => {
