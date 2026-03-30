@@ -39,7 +39,6 @@ export default function App() {
   const [remotePeerName, setRemotePeerName] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pendingFileMeta = useRef<{ name: string; type: string } | null>(null);
 
   // Initialize Peer
   useEffect(() => {
@@ -89,33 +88,30 @@ export default function App() {
     });
 
     conn.on('data', (data: any) => {
-      if (data && data.type === 'name') {
-        setRemotePeerName(data.name);
-      } else if (data && data.type === 'file-start') {
-        // Store file metadata; the raw binary arrives in the next message
-        pendingFileMeta.current = { name: data.name, type: data.fileType || '' };
-        setTransferState('transferring');
-        setProgress(0);
-      } else if (data instanceof ArrayBuffer || data instanceof Blob) {
-        // Reconstruct blob with the pre-stored name and MIME type
-        const meta = pendingFileMeta.current;
-        const mimeType = meta?.type || 'application/octet-stream';
-        const blob = new Blob(
-          [data instanceof Blob ? data : data],
-          { type: mimeType }
-        );
-        setReceivedFile({
-          blob,
-          metadata: {
-            name: meta?.name || 'received-file',
-            size: blob.size,
-            type: mimeType,
-          },
-        });
-        pendingFileMeta.current = null;
-        setTransferState('completed');
-        setProgress(100);
+      // Plain object = control message (e.g. name handshake)
+      if (data && typeof data === 'object' &&
+          !(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) {
+        if (data.type === 'name') setRemotePeerName(data.name);
+        return;
       }
+
+      // Packed binary: [4-byte metaLen LE][metaJSON bytes][file bytes]
+      const raw: Uint8Array = data instanceof Uint8Array
+        ? data
+        : new Uint8Array(data as ArrayBuffer);
+      const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+      const metaLen = dv.getUint32(0, true);
+      const metaStr = new TextDecoder().decode(raw.subarray(4, 4 + metaLen));
+      const meta = JSON.parse(metaStr) as { name: string; type: string };
+      const fileBytes = raw.subarray(4 + metaLen);
+      const fileBuffer = fileBytes.buffer.slice(fileBytes.byteOffset, fileBytes.byteOffset + fileBytes.byteLength) as ArrayBuffer;
+      const blob = new Blob([fileBuffer], { type: meta.type || 'application/octet-stream' });
+      setReceivedFile({
+        blob,
+        metadata: { name: meta.name, size: blob.size, type: meta.type },
+      });
+      setTransferState('completed');
+      setProgress(100);
     });
 
     conn.on('close', () => {
@@ -153,21 +149,23 @@ export default function App() {
     if (!connection || !selectedFile) return;
 
     setTransferState('transferring');
-    setProgress(5);
+    setProgress(10);
 
-    // 1. Send metadata first so receiver knows name + MIME type before binary arrives
-    connection.send({
-      type: 'file-start',
+    const fileBuffer = await selectedFile.arrayBuffer();
+    setProgress(60);
+
+    // Pack everything into one message: [4-byte metaLen LE][metaJSON][file bytes]
+    const metaStr = JSON.stringify({
       name: selectedFile.name,
-      fileType: selectedFile.type || 'application/octet-stream',
-      size: selectedFile.size,
+      type: selectedFile.type || 'application/octet-stream',
     });
+    const metaBytes = new TextEncoder().encode(metaStr);
+    const packet = new Uint8Array(4 + metaBytes.byteLength + fileBuffer.byteLength);
+    new DataView(packet.buffer).setUint32(0, metaBytes.byteLength, true);
+    packet.set(metaBytes, 4);
+    packet.set(new Uint8Array(fileBuffer), 4 + metaBytes.byteLength);
 
-    // 2. Convert File → ArrayBuffer; PeerJS reliably transmits ArrayBuffers as raw bytes
-    const arrayBuffer = await selectedFile.arrayBuffer();
-    setProgress(50);
-    connection.send(arrayBuffer);
-
+    connection.send(packet.buffer);
     setProgress(100);
     setTransferState('completed');
   };
