@@ -42,7 +42,18 @@ export default function App() {
 
   // Initialize Peer
   useEffect(() => {
-    const newPeer = new Peer();
+    const newPeer = new Peer(undefined, {
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' },
+        ],
+        iceTransportPolicy: 'all',
+        sdpSemantics: 'unified-plan',
+      },
+    });
     
     newPeer.on('open', (id) => {
       setPeerId(id);
