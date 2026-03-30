@@ -1,0 +1,5 @@
+{
+  "name": "PeerShare P2P",
+  "description": "A secure, peer-to-peer file sharing application that transfers files directly between browsers without server storage.",
+  "requestFramePermissions": []
+}
