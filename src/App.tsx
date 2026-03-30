@@ -39,6 +39,7 @@ export default function App() {
   const [remotePeerName, setRemotePeerName] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingFileMeta = useRef<{ name: string; type: string } | null>(null);
 
   // Initialize Peer
   useEffect(() => {
@@ -91,23 +92,26 @@ export default function App() {
       if (data.type === 'name') {
         setRemotePeerName(data.name);
       } else if (data.type === 'file-start') {
+        // Store incoming file metadata so we can label the blob correctly
+        pendingFileMeta.current = { name: data.name, type: data.fileType };
         setTransferState('transferring');
         setProgress(0);
-      } else if (data.type === 'file-chunk') {
-        // PeerJS handles large files automatically if we send the whole blob,
-        // but for progress we might need a different approach.
-        // For simplicity in this version, we'll send the whole blob.
       } else if (data instanceof Blob || data instanceof ArrayBuffer) {
-        // Received the actual file
-        const blob = data instanceof Blob ? data : new Blob([data]);
+        // Received the actual file — attach stored metadata
+        const meta = pendingFileMeta.current;
+        const mimeType = meta?.type || '';
+        const blob = data instanceof Blob
+          ? new Blob([data], { type: mimeType })
+          : new Blob([data], { type: mimeType });
         setReceivedFile({
           blob,
           metadata: {
-            name: conn.metadata?.name || 'received-file',
+            name: meta?.name || 'received-file',
             size: blob.size,
-            type: blob.type
+            type: mimeType
           }
         });
+        pendingFileMeta.current = null;
         setTransferState('completed');
         setProgress(100);
       }
@@ -146,13 +150,20 @@ export default function App() {
     if (!connection || !selectedFile) return;
 
     setTransferState('transferring');
-    setProgress(10); // Start progress
+    setProgress(10);
 
-    // We pass metadata in the connection or as a separate message
-    // PeerJS can send Blobs directly
+    // First send file metadata so the receiver knows the name and type
+    connection.send({
+      type: 'file-start',
+      name: selectedFile.name,
+      fileType: selectedFile.type,
+      size: selectedFile.size,
+    });
+
+    // Then send the actual file blob
     connection.send(selectedFile);
-    
-    // Simulate progress since PeerJS doesn't give fine-grained progress for simple sends
+
+    // Simulate progress (PeerJS doesn't expose per-chunk progress for simple sends)
     let p = 10;
     const interval = setInterval(() => {
       p += Math.random() * 20;
