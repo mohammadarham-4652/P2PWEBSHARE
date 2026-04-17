@@ -16,19 +16,19 @@ export interface PeerKey {
 
 function toBase64Url(input: string): string {
   const bytes = new TextEncoder().encode(input);
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-function fromBase64Url(input: string): string {
+function fromBase64Url(input: string): Uint8Array {
   const normalized = input
     .trim()
     .replace(/\s+/g, '')
     .replace(/-/g, '+')
     .replace(/_/g, '/');
   const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
-  return atob(padded);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
 export function encodeKey(key: PeerKey): string {
@@ -38,14 +38,9 @@ export function encodeKey(key: PeerKey): string {
 
 export function decodeKey(encoded: string): PeerKey | null {
   try {
-    const binary = fromBase64Url(encoded);
-    try {
-      return JSON.parse(binary);
-    } catch {
-      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-      const json = new TextDecoder().decode(bytes);
-      return JSON.parse(json);
-    }
+    const bytes = fromBase64Url(encoded);
+    const json = new TextDecoder().decode(bytes);
+    return JSON.parse(json);
   } catch (e) {
     return null;
   }
