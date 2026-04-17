@@ -128,7 +128,7 @@ export default function App() {
   const handleConnect = () => {
     if (!peer || !receiverKey) return;
     
-    const decoded = decodeKey(receiverKey);
+    const decoded = decodeKey(receiverKey.trim());
     if (!decoded) {
       setError('Invalid share key.');
       return;
